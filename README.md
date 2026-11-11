@@ -21,13 +21,24 @@ one hour of each upstream release.
 ```yaml
 jobs:
   test:
-    runs-on: ubuntu-24.04   # or ubuntu-24.04-arm, or any runner with Docker
+    runs-on: ubuntu-latest   # any Linux runner with Docker or Podman, x64 or arm64
     steps:
       - uses: actions/checkout@v7
       - uses: xSAVIKx/run-aws-emulator@v1
       - run: aws sts get-caller-identity   # "Account": "000000000000"
       - run: make integration-test         # your SDK tests use the emulator
 ```
+
+## Supported runners
+
+| Runner | Result |
+|---|---|
+| `ubuntu-latest`, `ubuntu-22.04`, `ubuntu-24.04`, `ubuntu-26.04` and their `-arm` variants | Supported and tested in CI |
+| Self-hosted Linux with Docker or Podman (also rootless) | Supported; Podman is tested on Ubuntu 24.04 and 26.04 |
+| GitHub-hosted macOS, Windows and `ubuntu-slim` | Not supported: no Docker for Linux containers. The action stops at once with a clear message. |
+
+Set `engine: podman` to force Podman. By default the action uses Docker if it is installed,
+else Podman.
 
 For reproducible runs, pin the image to a build tag or a digest:
 
@@ -48,6 +59,7 @@ For reproducible runs, pin the image to a build tag or a digest:
 | `memory` | `2g` | The container memory limit. |
 | `wait-timeout` | `60` | Seconds to wait until the emulator is healthy. |
 | `pull` | `false` | Pull the image before the start. |
+| `engine` | (auto) | `docker` or `podman`. Empty means Docker if it is installed, else Podman. |
 
 ## Outputs
 
