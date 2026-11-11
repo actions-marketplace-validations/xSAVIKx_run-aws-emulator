@@ -13,6 +13,9 @@ The action runs the multi-arch container image from
 image is tested on `linux/amd64` and `linux/arm64`, signed with cosign, and updated within
 one hour of each upstream release.
 
+Write-up with `docker run`, Compose, GitHub Actions and the gotchas:
+[Running AWS Emulator in Docker, on any arch, in CI](https://serhiichuk.dev/blog/aws-emulator-container-image/)
+
 > This is an unofficial community action. It is not affiliated with or endorsed by Amazon
 > Web Services.
 
