@@ -1,0 +1,63 @@
+name: Run AWS Emulator
+description: >-
+  Run the AWS Emulator, a local emulator of the AWS APIs, as a signed multi-arch Docker
+  image, and point the AWS CLI and SDKs at it. Unofficial community action.
+author: Yurii Serhiichuk
+branding:
+  icon: cloud
+  color: orange
+
+inputs:
+  image:
+    description: >-
+      Container image to run. Pin a build tag or a digest for reproducible runs, for example
+      ghcr.io/xsavikx/aws-emulator:1.0.322.1 or ghcr.io/xsavikx/aws-emulator@sha256:...
+      Use the ":debian" tags for the Debian variant.
+    default: ghcr.io/xsavikx/aws-emulator:latest
+  port:
+    description: Port on 127.0.0.1. The emulator uses the same port inside the container.
+    default: "9297"
+  region:
+    description: AWS Region for the SDKs (AWS_REGION and AWS_DEFAULT_REGION).
+    default: us-east-1
+  telemetry:
+    description: Upstream emulator telemetry, "on" or "off".
+    default: "off"
+  memory:
+    description: Container memory limit.
+    default: 2g
+  wait-timeout:
+    description: Seconds to wait until the emulator is healthy.
+    default: "60"
+  pull:
+    description: Pull the image before the start ("true" or "false").
+    default: "false"
+
+outputs:
+  endpoint-url:
+    description: The emulator endpoint, for example https://127.0.0.1:9297.
+    value: ${{ steps.start.outputs.endpoint-url }}
+  ca-file:
+    description: The emulator CA certificate (PEM).
+    value: ${{ steps.start.outputs.ca-file }}
+  container:
+    description: The container name. Use it with "docker logs".
+    value: ${{ steps.start.outputs.container }}
+  image-digest:
+    description: The repository digest of the image that runs.
+    value: ${{ steps.start.outputs.image-digest }}
+
+runs:
+  using: composite
+  steps:
+    - id: start
+      shell: bash
+      env:
+        EMULATOR_IMAGE: ${{ inputs.image }}
+        EMULATOR_PORT: ${{ inputs.port }}
+        EMULATOR_REGION: ${{ inputs.region }}
+        EMULATOR_TELEMETRY: ${{ inputs.telemetry }}
+        EMULATOR_MEMORY: ${{ inputs.memory }}
+        EMULATOR_WAIT: ${{ inputs.wait-timeout }}
+        EMULATOR_PULL: ${{ inputs.pull }}
+      run: '"$GITHUB_ACTION_PATH/start-emulator.sh" --github-env'
