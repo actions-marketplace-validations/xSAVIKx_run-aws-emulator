@@ -23,7 +23,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04   # or ubuntu-24.04-arm, or any runner with Docker
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: xSAVIKx/run-aws-emulator@v1
       - run: aws sts get-caller-identity   # "Account": "000000000000"
       - run: make integration-test         # your SDK tests use the emulator
