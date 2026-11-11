@@ -1,6 +1,7 @@
 # Run AWS Emulator
 
 [![Test](https://github.com/xSAVIKx/run-aws-emulator/actions/workflows/test.yml/badge.svg)](https://github.com/xSAVIKx/run-aws-emulator/actions/workflows/test.yml)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-Run%20AWS%20Emulator-orange?logo=github)](https://github.com/marketplace/actions/run-aws-emulator)
 
 A GitHub Action that runs the [AWS Emulator](https://github.com/aws/aws-emulator), a local
 emulator of the AWS APIs, and points the AWS CLI and SDKs at it. Your tests then call
