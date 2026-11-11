@@ -13,18 +13,29 @@ permissions:
 
 jobs:
   test:
-    name: ${{ matrix.variant }} on ${{ matrix.runner }} (port ${{ matrix.port }})
+    name: ${{ matrix.runner }} ${{ matrix.engine }} ${{ matrix.variant }} ${{ matrix.port }}
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-        variant: [latest, debian]
+        runner:
+          - ubuntu-latest
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - ubuntu-26.04
+          - ubuntu-26.04-arm
+        variant: [latest]
+        engine: [docker]
         port: ["9297"]
         include:
-          - runner: ubuntu-24.04
-            variant: latest
-            port: "19300"
+          - { runner: ubuntu-24.04, variant: debian, engine: docker, port: "9297" }
+          - { runner: ubuntu-24.04-arm, variant: debian, engine: docker, port: "9297" }
+          - { runner: ubuntu-24.04, variant: latest, engine: docker, port: "19300" }
+          - { runner: ubuntu-24.04, variant: latest, engine: podman, port: "9297" }
+          - { runner: ubuntu-26.04, variant: latest, engine: podman, port: "9297" }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -36,6 +47,7 @@ jobs:
         with:
           image: ghcr.io/xsavikx/aws-emulator:${{ matrix.variant }}
           port: ${{ matrix.port }}
+          engine: ${{ matrix.engine }}
           pull: "true"
 
       - name: Check outputs
@@ -55,6 +67,7 @@ jobs:
       - name: AWS CLI against the emulator
         run: |
           set -euxo pipefail
+          if ! command -v aws >/dev/null; then pipx install awscli >/dev/null 2>&1 || python3 -m pip install --user awscli; fi
           test "$(aws sts get-caller-identity --query Account --output text)" = 000000000000
           aws s3 mb s3://action-test
           echo hello | aws s3 cp - s3://action-test/hello.txt
@@ -69,14 +82,39 @@ jobs:
           set -euo pipefail
           python3 -c "import urllib.request; urllib.request.urlopen('https://pypi.org/simple/', timeout=20); print('python ok')"
           curl -fsS --cacert "$SSL_CERT_FILE" -o /dev/null https://repo.maven.apache.org/maven2/ && echo "curl ok"
-          test -n "${JAVA_TOOL_OPTIONS:-}"
+          if command -v keytool >/dev/null; then test -n "${JAVA_TOOL_OPTIONS:-}"; fi
 
       - name: Emulator logs
         if: failure()
-        run: docker logs "${{ steps.emulator.outputs.container }}"
+        run: ${{ matrix.engine }} logs "${{ steps.emulator.outputs.container }}"
+
+  # Runners without Docker for Linux containers must fail early with a clear message.
+  unsupported:
+    name: ${{ matrix.runner }} fails with a clear message
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, windows-latest, ubuntu-slim]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run AWS Emulator (expected to fail)
+        id: emulator
+        continue-on-error: true
+        uses: ./
+      - name: Check that the action failed
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.emulator.outcome }}
+        run: |
+          echo "outcome=$OUTCOME"
+          test "$OUTCOME" = failure
 
   lint:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

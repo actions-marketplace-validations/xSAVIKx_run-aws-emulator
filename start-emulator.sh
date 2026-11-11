@@ -17,6 +17,7 @@
 #   EMULATOR_REGION     AWS Region     (default us-east-1)
 #   EMULATOR_WAIT       seconds to wait until healthy (default 60)
 #   EMULATOR_PULL       "true" to pull the image before the start (default false)
+#   EMULATOR_ENGINE     "docker" or "podman" (default: docker if present, else podman)
 #
 # Besides the emulator files, the script writes two trust files to
 # ~/.aws/emulator-extra/<port>/: ca-bundle.pem (system CAs + emulator CA)
@@ -40,44 +41,81 @@ RUN_DIR="$DIR/$PORT"
 EXTRA="$HOME/.aws/emulator-extra/$PORT"
 
 log() { echo "start-emulator: $*" >&2; }
+fail() {
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::error title=Run AWS Emulator::$*" >&2; fi
+  log "error: $*"; exit 1
+}
+
+# Container engine: Docker, or Podman (for example on self-hosted runners).
+ENGINE="${EMULATOR_ENGINE:-}"
+if [ -z "$ENGINE" ]; then
+  if command -v docker >/dev/null 2>&1; then ENGINE=docker
+  elif command -v podman >/dev/null 2>&1; then ENGINE=podman
+  else ENGINE=docker
+  fi
+fi
 
 if [ "${1:-}" = "--stop" ]; then
-  docker stop -t 20 "$NAME" >/dev/null 2>&1 || true
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  "$ENGINE" stop -t 20 "$NAME" >/dev/null 2>&1 || true
+  "$ENGINE" rm -f "$NAME" >/dev/null 2>&1 || true
   rm -rf "$EXTRA"
   log "stopped $NAME"
   exit 0
 fi
 
-# Rootless Docker maps container root to the host user.
-if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q rootless; then
-  user="0:0"
+# Checks before the start, with clear messages for unsupported runners.
+command -v "$ENGINE" >/dev/null 2>&1 \
+  || fail "$ENGINE is not installed. The AWS Emulator runs only as a Linux container. Use a Linux runner with Docker (for example ubuntu-latest or ubuntu-24.04-arm). GitHub-hosted macOS and Windows runners and ubuntu-slim have no Docker for Linux containers."
+command -v curl >/dev/null 2>&1 || fail "curl is not installed."
+if [ "$ENGINE" = podman ]; then
+  ostype=$(podman info --format '{{.Host.OS}}' 2>/dev/null) || fail "podman does not work on this runner."
 else
-  user="$(id -u):$(id -g)"
+  ostype=$(docker info --format '{{.OSType}}' 2>/dev/null) \
+    || fail "The Docker daemon is not reachable. Start Docker, or use a Linux runner with Docker (for example ubuntu-latest)."
 fi
+[ "$ostype" = linux ] \
+  || fail "The container engine runs $ostype containers. The AWS Emulator needs Linux containers. GitHub-hosted Windows runners support only Windows containers; use a Linux runner."
+
+# A rootless engine maps container root to the host user.
+rootless=false
+if [ "$ENGINE" = podman ]; then
+  [ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = true ] && rootless=true
+elif docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q rootless; then
+  rootless=true
+fi
+if [ "$rootless" = true ]; then user="0:0"; else user="$(id -u):$(id -g)"; fi
 
 mkdir -p "$DIR" "$EXTRA"
-docker rm -f "$NAME" >/dev/null 2>&1 || true
+"$ENGINE" rm -f "$NAME" >/dev/null 2>&1 || true
 if [ "${EMULATOR_PULL:-false}" = "true" ]; then
   log "pulling $IMAGE"
-  docker pull -q "$IMAGE" >&2
+  "$ENGINE" pull -q "$IMAGE" >&2
 fi
-log "starting $IMAGE as $NAME on 127.0.0.1:$PORT (user $user)"
-docker run -d --name "$NAME" --memory="$MEMORY" --memory-swap="$MEMORY" \
-  -p "127.0.0.1:$PORT:$PORT" --user "$user" \
-  -e HOME="$HOME" -e EMULATOR_TELEMETRY="$TELEMETRY" -e EMULATOR_HEALTHCHECK_PORT="$PORT" \
-  -v "$DIR:$DIR" "$IMAGE" -p "$PORT" >/dev/null
+log "starting $IMAGE as $NAME on 127.0.0.1:$PORT ($ENGINE, user $user)"
+run_emulator() {
+  "$ENGINE" run -d --name "$NAME" "$@" \
+    -p "127.0.0.1:$PORT:$PORT" --user "$user" \
+    -e HOME="$HOME" -e EMULATOR_TELEMETRY="$TELEMETRY" -e EMULATOR_HEALTHCHECK_PORT="$PORT" \
+    -v "$DIR:$DIR" "$IMAGE" -p "$PORT" >/dev/null
+}
+if ! run_emulator --memory="$MEMORY" --memory-swap="$MEMORY"; then
+  # Some rootless setups cannot set memory limits (no cgroup delegation).
+  log "warning: the start with a memory limit failed; starting without a memory limit"
+  "$ENGINE" rm -f "$NAME" >/dev/null 2>&1 || true
+  run_emulator || fail "the container did not start"
+fi
 
 healthy=false
 for _ in $(seq $((WAIT * 2))); do
   if [ -s "$RUN_DIR/ca.pem" ] && curl -sf --cacert "$RUN_DIR/ca.pem" "https://127.0.0.1:$PORT/__admin/health" >/dev/null 2>&1; then
     healthy=true; break
   fi
-  if [ "$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" != "true" ]; then break; fi
+  if [ "$("$ENGINE" inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)" != "true" ]; then break; fi
   sleep 0.5
 done
 if [ "$healthy" != true ]; then
-  log "the emulator did not become healthy"; docker logs "$NAME" >&2 || true; exit 1
+  "$ENGINE" logs "$NAME" >&2 || true
+  fail "the emulator did not become healthy in ${WAIT}s"
 fi
 log "healthy"
 
@@ -127,7 +165,7 @@ if [ "${1:-}" = "--github-env" ]; then
     echo "endpoint-url=https://127.0.0.1:$PORT"
     echo "ca-file=$RUN_DIR/ca.pem"
     echo "container=$NAME"
-    echo "image-digest=$(docker inspect -f '{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || true)"
+    echo "image-digest=$("$ENGINE" image inspect -f '{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || true)"
   } >> "${GITHUB_OUTPUT:-/dev/null}"
 else
   echo "unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE"

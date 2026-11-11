@@ -30,6 +30,11 @@ inputs:
   pull:
     description: Pull the image before the start ("true" or "false").
     default: "false"
+  engine:
+    description: >-
+      Container engine, "docker" or "podman". Empty means Docker if it is installed,
+      else Podman.
+    default: ""
 
 outputs:
   endpoint-url:
@@ -58,4 +63,5 @@ runs:
         EMULATOR_MEMORY: ${{ inputs.memory }}
         EMULATOR_WAIT: ${{ inputs.wait-timeout }}
         EMULATOR_PULL: ${{ inputs.pull }}
+        EMULATOR_ENGINE: ${{ inputs.engine }}
       run: '"$GITHUB_ACTION_PATH/start-emulator.sh" --github-env'
