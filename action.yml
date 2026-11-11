@@ -1,7 +1,5 @@
 name: Run AWS Emulator
-description: >-
-  Run the AWS Emulator, a local emulator of the AWS APIs, as a signed multi-arch Docker
-  image, and point the AWS CLI and SDKs at it. Unofficial community action.
+description: "Run the AWS Emulator (local AWS APIs) in Docker and point the AWS CLI and SDKs at it. Unofficial community action."
 author: Yurii Serhiichuk
 branding:
   icon: cloud
