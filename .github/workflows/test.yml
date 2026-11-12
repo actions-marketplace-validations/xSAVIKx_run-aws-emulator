@@ -89,7 +89,7 @@ jobs:
 
       - name: Emulator logs
         if: failure()
-        run: ${{ matrix.engine }} logs "${{ steps.emulator.outputs.container }}"
+        run: ${{ matrix.engine }} logs "aws-emulator-${{ matrix.port }}"
 
   # Runners without Docker for Linux containers must fail early with a clear message.
   unsupported:
@@ -123,3 +123,11 @@ jobs:
         with:
           persist-credentials: false
       - run: shellcheck start-emulator.sh
+      - name: Invalid inputs fail before the start
+        run: |
+          set -u
+          for setting in EMULATOR_WAIT=abc EMULATOR_PORT=0 EMULATOR_PORT=70000 EMULATOR_TELEMETRY=maybe \
+            EMULATOR_PULL=yes EMULATOR_ENGINE=nerdctl "EMULATOR_REGION=us-east-1$(printf '\nX=1')"; do
+            if env "$setting" ./start-emulator.sh; then echo "no failure for $setting"; exit 1; fi
+          done
+          if docker ps -a --format '{{.Names}}' | grep -q '^aws-emulator-'; then echo "a container started"; exit 1; fi

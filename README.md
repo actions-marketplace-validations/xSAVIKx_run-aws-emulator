@@ -56,13 +56,16 @@ For reproducible runs, pin the image to a build tag or a digest:
 | Input | Default | Description |
 |---|---|---|
 | `image` | `ghcr.io/xsavikx/aws-emulator:latest` | The image. Use a `-debian` or `-distroless` tag for those variants. |
-| `port` | `9297` | The port on `127.0.0.1`. The container uses the same port. |
+| `port` | `9297` | The port on `127.0.0.1`, from 1 to 65535. The container uses the same port. |
 | `region` | `us-east-1` | The value of `AWS_REGION` and `AWS_DEFAULT_REGION`. |
-| `telemetry` | `off` | Upstream emulator telemetry, `on` or `off`. |
+| `telemetry` | `off` | Upstream emulator telemetry, `on` or `off`. `true`, `false`, `1` and `0` also work. |
 | `memory` | `2g` | The container memory limit. |
-| `wait-timeout` | `60` | Seconds to wait until the emulator is healthy. |
-| `pull` | `false` | Pull the image before the start. |
+| `wait-timeout` | `60` | Seconds to wait until the emulator is healthy. A whole number, 1 or more. |
+| `pull` | `false` | Pull the image before the start, `true` or `false`. |
 | `engine` | (auto) | `docker` or `podman`. Empty means Docker if it is installed, else Podman. |
+
+The action checks all inputs before it starts a container. If an input is not valid, the
+action stops with a clear message.
 
 ## Outputs
 
@@ -70,8 +73,8 @@ For reproducible runs, pin the image to a build tag or a digest:
 |---|---|
 | `endpoint-url` | The endpoint, for example `https://127.0.0.1:9297`. |
 | `ca-file` | The emulator CA certificate (PEM). |
-| `container` | The container name, for `docker logs`. |
-| `image-digest` | The repository digest of the image that runs. |
+| `container` | The container name (`aws-emulator-<port>`), for `docker logs`. The action sets it also when the start fails. |
+| `image-digest` | The repository digest of the image that runs. Empty if the image has no digest for its repository. |
 
 ## Environment for the next steps
 
@@ -84,12 +87,18 @@ code change:
 | `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE` | The files that the emulator writes for this run |
 | `AWS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `AWS_EMULATOR_CA` | The emulator CA certificate |
 | `SSL_CERT_FILE` | The system CAs + the emulator CA (Rust, .NET, OpenSSL) |
-| `JAVA_TOOL_OPTIONS` | A truststore with the JDK CAs + the emulator CA |
+| `JAVA_TOOL_OPTIONS`, `AWS_EMULATOR_JAVA_TRUSTSTORE` | A truststore with the JDK CAs + the emulator CA |
 | `AWS_REGION`, `AWS_DEFAULT_REGION` | The `region` input |
 | `AWS_EC2_METADATA_DISABLED`, `AWS_DISABLE_HOST_PREFIX_INJECTION` | `true` |
 
 `SSL_CERT_FILE` and `JAVA_TOOL_OPTIONS` point to combined trust files. Package downloads
 from the internet (Maven, NuGet, crates.io) keep working in the same job.
+
+The action sets these two variables only when it can make a complete file. If the runner
+has no system CA bundle, the action does not set `SSL_CERT_FILE`. If the action cannot
+find the JDK `cacerts` file (in `$JAVA_HOME/lib/security` or `$JAVA_HOME/jre/lib/security`)
+or `keytool` fails, the action does not set `JAVA_TOOL_OPTIONS`. In each case, the log
+shows a warning.
 
 Do not set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` or `AWS_PROFILE` in the job. The
 SDKs use these before the emulator credentials file.
@@ -106,16 +115,47 @@ SDKs use these before the emulator credentials file.
 - **Other containers** cannot call the emulator by a service name, because the certificate
   names only `localhost`, `127.0.0.1` and `::1`.
 
+## The container lifetime
+
+A composite action has no post step. The container keeps running until the job ends.
+GitHub-hosted runners remove it with the virtual machine. On a self-hosted runner, the
+container stays after the job. On a self-hosted runner:
+
+- Give each concurrent job a unique `port`. The container name contains the port.
+- Stop the container at the end of the job:
+
+```yaml
+      - uses: xSAVIKx/run-aws-emulator@v1
+        id: emulator
+      # ... your test steps ...
+      - if: always()
+        run: docker rm -f "${{ steps.emulator.outputs.container }}" || true
+```
+
+You can also run `start-emulator.sh --stop` with the same `EMULATOR_PORT`. It removes the
+container and the combined trust files.
+
+Each container has the labels `run-aws-emulator.source` and
+`run-aws-emulator.run-id` (the value of `GITHUB_RUN_ID`). Use them to find old containers.
+
 Tested examples for Python, TypeScript, Java, Go, C# and Rust are in
 [aws-emulator-docker/examples](https://github.com/xSAVIKx/aws-emulator-docker/tree/main/examples).
 
 ## Run the same script on your computer
 
 ```sh
-eval "$(./start-emulator.sh)"     # start, wait, and export the variables
+out="$(./start-emulator.sh)" && eval "$out"   # start, wait, and export the variables
 aws sts get-caller-identity
 ./start-emulator.sh --stop
 ```
+
+Do not use `eval "$(./start-emulator.sh)"`. With that form, the shell ignores the exit
+status of the script, and you do not see a failure.
+
+The script reads the same settings as environment variables, for example
+`EMULATOR_PORT=9298 EMULATOR_MEMORY=4g`. The comment at the top of `start-emulator.sh`
+lists them. The default telemetry is `off`. `DO_NOT_TRACK=1` also gives `off` when
+`EMULATOR_TELEMETRY` is not set. An explicit `EMULATOR_TELEMETRY=on` has priority.
 
 The script detects rootless Docker and then runs the container as `0:0`, which maps to
 your own user.

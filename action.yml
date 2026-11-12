@@ -13,19 +13,19 @@ inputs:
       Use the ":debian" tags for the Debian variant.
     default: ghcr.io/xsavikx/aws-emulator:latest
   port:
-    description: Port on 127.0.0.1. The emulator uses the same port inside the container.
+    description: Port on 127.0.0.1, from 1 to 65535. The emulator uses the same port inside the container.
     default: "9297"
   region:
     description: AWS Region for the SDKs (AWS_REGION and AWS_DEFAULT_REGION).
     default: us-east-1
   telemetry:
-    description: Upstream emulator telemetry, "on" or "off".
+    description: Upstream emulator telemetry, "on" or "off" ("true", "false", "1" and "0" also work).
     default: "off"
   memory:
     description: Container memory limit.
     default: 2g
   wait-timeout:
-    description: Seconds to wait until the emulator is healthy.
+    description: Seconds to wait until the emulator is healthy (a whole number, 1 or more).
     default: "60"
   pull:
     description: Pull the image before the start ("true" or "false").
@@ -44,10 +44,10 @@ outputs:
     description: The emulator CA certificate (PEM).
     value: ${{ steps.start.outputs.ca-file }}
   container:
-    description: The container name. Use it with "docker logs".
+    description: The container name (aws-emulator-<port>). Use it with "docker logs". The action sets it also when the start fails.
     value: ${{ steps.start.outputs.container }}
   image-digest:
-    description: The repository digest of the image that runs.
+    description: The repository digest of the image that runs. Empty if the image has no digest for its repository.
     value: ${{ steps.start.outputs.image-digest }}
 
 runs:
