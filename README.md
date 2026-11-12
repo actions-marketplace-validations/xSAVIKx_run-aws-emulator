@@ -36,7 +36,7 @@ jobs:
 
 | Runner | Result |
 |---|---|
-| `ubuntu-latest`, `ubuntu-22.04`, `ubuntu-24.04`, `ubuntu-26.04` and their `-arm` variants | Supported and tested in CI |
+| `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-26.04` and their `-arm` variants | Supported and tested in CI |
 | Self-hosted Linux with Docker or Podman (also rootless) | Supported; Podman is tested on Ubuntu 24.04 and 26.04 |
 | GitHub-hosted macOS, Windows and `ubuntu-slim` | Not supported: no Docker for Linux containers. The action stops at once with a clear message. |
 
