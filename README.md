@@ -55,7 +55,7 @@ For reproducible runs, pin the image to a build tag or a digest:
 
 | Input | Default | Description |
 |---|---|---|
-| `image` | `ghcr.io/xsavikx/aws-emulator:latest` | The image. Use a `-debian` tag for the Debian variant. |
+| `image` | `ghcr.io/xsavikx/aws-emulator:latest` | The image. Use a `-debian` or `-distroless` tag for those variants. |
 | `port` | `9297` | The port on `127.0.0.1`. The container uses the same port. |
 | `region` | `us-east-1` | The value of `AWS_REGION` and `AWS_DEFAULT_REGION`. |
 | `telemetry` | `off` | Upstream emulator telemetry, `on` or `off`. |

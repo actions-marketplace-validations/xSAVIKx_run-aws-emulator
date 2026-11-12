@@ -31,6 +31,9 @@ jobs:
         include:
           - { runner: ubuntu-24.04, variant: debian, engine: docker, port: "9297" }
           - { runner: ubuntu-24.04-arm, variant: debian, engine: docker, port: "9297" }
+          - { runner: ubuntu-24.04, variant: distroless, engine: docker, port: "9297" }
+          - { runner: ubuntu-24.04-arm, variant: distroless, engine: docker, port: "9297" }
+          - { runner: ubuntu-26.04, variant: distroless, engine: podman, port: "9297" }
           - { runner: ubuntu-24.04, variant: latest, engine: docker, port: "19300" }
           - { runner: ubuntu-24.04, variant: latest, engine: podman, port: "9297" }
           - { runner: ubuntu-26.04, variant: latest, engine: podman, port: "9297" }
