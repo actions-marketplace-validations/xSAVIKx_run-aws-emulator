@@ -51,6 +51,54 @@ For reproducible runs, pin the image to a build tag or a digest:
           image: ghcr.io/xsavikx/aws-emulator:1.0.322.1
 ```
 
+## Security
+
+### Pin the action to a commit
+
+A tag such as `v1` can move to a new commit. A full commit SHA cannot move. For the
+strictest pin, use the commit of a release and keep the version in a comment:
+
+```yaml
+      - uses: xSAVIKx/run-aws-emulator@<commit-sha> # v1.1.1
+```
+
+To get the commit SHA of a release, run:
+
+```sh
+git ls-remote https://github.com/xSAVIKx/run-aws-emulator 'refs/tags/v1.1.1^{}'
+```
+
+Dependabot and Renovate update this form of pin and its comment. In this repository, a
+ruleset blocks the deletion and the force push of `v*` tags. Only the repository admin can
+bypass it, to move the `v1` tag to a new release.
+
+### Verify the image signature
+
+The [image](https://github.com/xSAVIKx/aws-emulator-docker) has a keyless cosign signature
+from its release workflow. The `image-digest` output gives the exact image that runs. Verify
+that digest before your tests use the emulator:
+
+```yaml
+      - uses: xSAVIKx/run-aws-emulator@v1
+        id: emulator
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - run: |
+          cosign verify "${{ steps.emulator.outputs.image-digest }}" \
+            --certificate-identity 'https://github.com/xSAVIKx/aws-emulator-docker/.github/workflows/release.yml@refs/heads/main' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+If the signature is not correct, `cosign verify` fails and the job stops. The CI of this
+action runs this check on each change.
+
+### What a correct signature tells you
+
+The image build checks the AWS signature on the upstream package, and the image has a
+signature from this project's release workflow. Together they tell you that the emulator
+binary comes from AWS and that the image comes from this repository. They do not tell you
+that the emulator code is free of defects. Use the emulator for local and CI tests only.
+Do not give it real AWS credentials or production data.
+
 ## Inputs
 
 | Input | Default | Description |
