@@ -1,0 +1,43 @@
+# Run AWS Emulator
+
+> A GitHub Action that runs the AWS Emulator (https://github.com/aws/aws-emulator), a local emulator of the AWS APIs, in Docker or Podman, and points the AWS CLI and SDKs at it. Unofficial community action, not affiliated with Amazon Web Services. Maintained by Yurii Serhiichuk (https://serhiichuk.dev).
+
+The action starts the signed multi-arch image `ghcr.io/xsavikx/aws-emulator`, waits until the emulator is healthy, and sets the endpoint, credentials and CA variables for the next steps. Tests then call STS, S3, DynamoDB, SQS, SNS, Secrets Manager and other services without an AWS account. The account is `000000000000`.
+
+## Usage
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest   # any Linux runner with Docker or Podman, x64 or arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: xSAVIKx/run-aws-emulator@v1
+      - run: aws sts get-caller-identity   # "Account": "000000000000"
+```
+
+## Key facts
+
+- Runners: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-26.04` and their `-arm` variants are tested. Self-hosted Linux with Docker or Podman (also rootless) works. GitHub-hosted macOS, Windows and `ubuntu-slim` are not supported, and the action stops at once with a clear message.
+- Inputs: `image` (default `ghcr.io/xsavikx/aws-emulator:latest`; use a `-debian` or `-distroless` tag for other variants), `port` (9297), `region` (us-east-1), `telemetry` (off), `memory` (2g), `wait-timeout` (60), `pull` (false), `engine` (docker or podman, auto by default).
+- Outputs: `endpoint-url`, `ca-file`, `container`, `image-digest`.
+- Environment for the next steps: `AWS_ENDPOINT_URL`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `AWS_CA_BUNDLE`, `AWS_REGION`, `AWS_DEFAULT_REGION`, `AWS_EC2_METADATA_DISABLED`, `AWS_DISABLE_HOST_PREFIX_INJECTION`, `AWS_EMULATOR_CA`, `AWS_EMULATOR_JAVA_TRUSTSTORE`, `NODE_EXTRA_CA_CERTS`, and, when the combined trust files are complete, `SSL_CERT_FILE` and `JAVA_TOOL_OPTIONS`.
+- Do not set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` or `AWS_PROFILE` in the job. The SDKs use them before the emulator credentials file.
+- Use 127.0.0.1, not localhost, and path-style S3 addresses. AWS SDK for JavaScript v3: set `useQueueUrlAsEndpoint: false` on SQSClient.
+- Pin for reproducible runs: the image by build tag or digest, the action by full commit SHA (`git ls-remote https://github.com/xSAVIKx/run-aws-emulator 'refs/tags/<tag>^{}'`).
+- Verify the image: `cosign verify "<image-digest output>" --certificate-identity 'https://github.com/xSAVIKx/aws-emulator-docker/.github/workflows/release.yml@refs/heads/main' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
+
+## Docs
+
+- [README](https://github.com/xSAVIKx/run-aws-emulator/blob/main/README.md): inputs, outputs, environment, SDK notes, container lifetime, security
+- [GitHub Marketplace](https://github.com/marketplace/actions/run-aws-emulator)
+- [Image and action website](https://xsavikx.github.io/aws-emulator-docker/#github-action)
+- [Full documentation in one file](https://xsavikx.github.io/aws-emulator-docker/llms-full.txt): image README, examples, action README, FAQ
+- [Examples in six languages](https://github.com/xSAVIKx/aws-emulator-docker/tree/main/examples): Python pytest, TypeScript Vitest, Java JUnit 5, Go, C# xUnit, Rust
+- [Releases](https://github.com/xSAVIKx/run-aws-emulator/releases)
+
+## Optional
+
+- [Image source](https://github.com/xSAVIKx/aws-emulator-docker)
+- [Upstream AWS Emulator](https://github.com/aws/aws-emulator)
+- [AWS Emulator user guide](https://docs.aws.amazon.com/emulator/latest/userguide/)
