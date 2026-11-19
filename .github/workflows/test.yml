@@ -89,7 +89,7 @@ jobs:
         if: failure()
         run: ${{ matrix.engine }} logs "aws-emulator-${{ matrix.port }}"
 
-  # Runners without Docker for Linux containers must fail early with a clear message.
+  # Verify the image signature with the command that the README shows.
   verify:
     name: Verify the image signature (README example)
     runs-on: ubuntu-latest
@@ -104,6 +104,7 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             >/dev/null
 
+  # Runners without Docker for Linux containers must fail early with a clear message.
   unsupported:
     name: ${{ matrix.runner }} fails with a clear message
     strategy:
@@ -143,3 +144,265 @@ jobs:
             if env "$setting" ./start-emulator.sh; then echo "no failure for $setting"; exit 1; fi
           done
           if docker ps -a --format '{{.Names}}' | grep -q '^aws-emulator-'; then echo "a container started"; exit 1; fi
+
+  # The action must use an image that is already present when pull is "false".
+  pull-false:
+    name: pull false after a manual pull
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pull the image manually
+        run: docker pull -q ghcr.io/xsavikx/aws-emulator:latest
+      - name: Run AWS Emulator
+        id: emulator
+        uses: ./
+        with:
+          pull: "false"
+      - name: Check the emulator
+        env:
+          ENDPOINT: ${{ steps.emulator.outputs.endpoint-url }}
+          CA: ${{ steps.emulator.outputs.ca-file }}
+          DIGEST: ${{ steps.emulator.outputs.image-digest }}
+        run: |
+          set -euo pipefail
+          echo "endpoint=$ENDPOINT digest=$DIGEST"
+          [[ "$DIGEST" == ghcr.io/xsavikx/aws-emulator@sha256:* ]]
+          curl -fsS --cacert "$CA" "$ENDPOINT/__admin/health"
+      - name: Emulator logs
+        if: failure()
+        run: docker logs aws-emulator-9297
+
+  # The pinned build tag from the README example must work.
+  pinned:
+    name: pinned image tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run AWS Emulator
+        id: emulator
+        uses: ./
+        with:
+          image: ghcr.io/xsavikx/aws-emulator:1.0.322.1
+          pull: "true"
+      - name: Check the emulator
+        env:
+          DIGEST: ${{ steps.emulator.outputs.image-digest }}
+        run: |
+          set -euo pipefail
+          echo "digest=$DIGEST"
+          [[ "$DIGEST" == ghcr.io/xsavikx/aws-emulator@sha256:* ]]
+          test "$(docker inspect -f '{{.Config.Image}}' aws-emulator-9297)" = ghcr.io/xsavikx/aws-emulator:1.0.322.1
+          test "$(aws sts get-caller-identity --query Account --output text)" = 000000000000
+      - name: Emulator logs
+        if: failure()
+        run: docker logs aws-emulator-9297
+
+  # Two emulators on different ports must run at the same time in one job.
+  two-instances:
+    name: two instances on ports 9297 and 9298
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the first AWS Emulator
+        id: first
+        uses: ./
+        with:
+          port: "9297"
+          pull: "true"
+      - name: Run the second AWS Emulator
+        id: second
+        uses: ./
+        with:
+          port: "9298"
+      - name: Check that both emulators answer
+        env:
+          ENDPOINT1: ${{ steps.first.outputs.endpoint-url }}
+          CA1: ${{ steps.first.outputs.ca-file }}
+          NAME1: ${{ steps.first.outputs.container }}
+          ENDPOINT2: ${{ steps.second.outputs.endpoint-url }}
+          CA2: ${{ steps.second.outputs.ca-file }}
+          NAME2: ${{ steps.second.outputs.container }}
+        run: |
+          set -euxo pipefail
+          test "$ENDPOINT1" = https://127.0.0.1:9297
+          test "$ENDPOINT2" = https://127.0.0.1:9298
+          test "$NAME1" = aws-emulator-9297
+          test "$NAME2" = aws-emulator-9298
+          test "$(docker inspect -f '{{.State.Running}}' "$NAME1")" = true
+          test "$(docker inspect -f '{{.State.Running}}' "$NAME2")" = true
+          curl -fsS --cacert "$CA1" "$ENDPOINT1/__admin/health"
+          curl -fsS --cacert "$CA2" "$ENDPOINT2/__admin/health"
+          # The second step wrote the job environment last, so it points to port 9298.
+          test "$AWS_ENDPOINT_URL" = "$ENDPOINT2"
+          # The two emulators must keep separate data.
+          aws s3 mb s3://only-in-second
+          # Each emulator has its own credentials in its own directory.
+          AWS_SHARED_CREDENTIALS_FILE="$HOME/.aws/emulator/9297/emulator_credentials" \
+            AWS_CONFIG_FILE="$HOME/.aws/emulator/9297/config" \
+            aws s3 ls --endpoint-url "$ENDPOINT1" --ca-bundle "$CA1" > first.txt
+          if grep -q only-in-second first.txt; then echo "the first emulator has the bucket"; exit 1; fi
+          aws s3 ls | grep -q only-in-second
+      - name: Remove the second container as the README shows
+        env:
+          NAME2: ${{ steps.second.outputs.container }}
+          ENDPOINT1: ${{ steps.first.outputs.endpoint-url }}
+          CA1: ${{ steps.first.outputs.ca-file }}
+        run: |
+          set -euxo pipefail
+          docker rm -f "$NAME2"
+          if docker ps -a --format '{{.Names}}' | grep -qx "$NAME2"; then echo "$NAME2 is still present"; exit 1; fi
+          curl -fsS --cacert "$CA1" "$ENDPOINT1/__admin/health"
+      - name: Emulator logs
+        if: failure()
+        run: |
+          docker logs aws-emulator-9297 || true
+          docker logs aws-emulator-9298 || true
+
+  # The region, memory and telemetry inputs must reach the SDK environment and the container.
+  inputs:
+    name: region, memory and telemetry inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run AWS Emulator
+        id: emulator
+        uses: ./
+        with:
+          pull: "true"
+          region: eu-central-1
+          memory: 3g
+          # "0" is an alias. The action must give "off" to the container.
+          telemetry: "0"
+      - name: Check the effect of the inputs
+        env:
+          NAME: ${{ steps.emulator.outputs.container }}
+        run: |
+          set -euxo pipefail
+          test "$AWS_REGION" = eu-central-1
+          test "$AWS_DEFAULT_REGION" = eu-central-1
+          aws configure list | tee configure.txt
+          grep -E '^ *region ' configure.txt | grep -qw eu-central-1
+          # 3g is 3 * 1024^3 bytes.
+          test "$(docker inspect -f '{{.HostConfig.Memory}}' "$NAME")" = 3221225472
+          test "$(docker inspect -f '{{.HostConfig.MemorySwap}}' "$NAME")" = 3221225472
+          docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$NAME" | grep -qx EMULATOR_TELEMETRY=off
+          aws s3 mb s3://region-test
+          echo hello | aws s3 cp - s3://region-test/hello.txt
+          test "$(aws s3 cp s3://region-test/hello.txt -)" = hello
+      - name: Emulator logs
+        if: failure()
+        run: docker logs aws-emulator-9297
+
+  # The cleanup path from the README must remove the container and the trust files.
+  stop:
+    name: start-emulator.sh --stop removes the container
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run AWS Emulator
+        id: emulator
+        uses: ./
+        with:
+          port: "9299"
+          pull: "true"
+      - name: Stop the emulator
+        env:
+          NAME: ${{ steps.emulator.outputs.container }}
+          ENDPOINT: ${{ steps.emulator.outputs.endpoint-url }}
+          CA: ${{ steps.emulator.outputs.ca-file }}
+        run: |
+          set -euxo pipefail
+          test "$NAME" = aws-emulator-9299
+          test -s "$HOME/.aws/emulator-extra/9299/ca-bundle.pem"
+          curl -fsS --cacert "$CA" "$ENDPOINT/__admin/health"
+          EMULATOR_PORT=9299 ./start-emulator.sh --stop
+          if docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then echo "$NAME is still present"; exit 1; fi
+          if [ -e "$HOME/.aws/emulator-extra/9299" ]; then echo "the trust files are still present"; exit 1; fi
+          if curl -fsS --max-time 5 --cacert "$CA" "$ENDPOINT/__admin/health"; then echo "the emulator still answers"; exit 1; fi
+          # A second stop must also succeed.
+          EMULATOR_PORT=9299 ./start-emulator.sh --stop
+
+  # The AWS SDKs must work with only the environment that the action sets.
+  sdk:
+    name: SDK smoke test (boto3 and AWS SDK for JavaScript v3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install the SDKs
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -q boto3==1.44.6
+          mkdir -p "$RUNNER_TEMP/js"
+          cd "$RUNNER_TEMP/js"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --save-exact @aws-sdk/client-s3@3.1172.0
+      - name: Run AWS Emulator
+        id: emulator
+        uses: ./
+        with:
+          pull: "true"
+      - name: Python boto3 (S3 and SQS)
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import boto3
+
+          print("endpoint", os.environ["AWS_ENDPOINT_URL"], "ca", os.environ["AWS_CA_BUNDLE"])
+          s3 = boto3.client("s3")
+          s3.create_bucket(Bucket="boto3-test")
+          s3.put_object(Bucket="boto3-test", Key="hello.txt", Body=b"hello from boto3")
+          body = s3.get_object(Bucket="boto3-test", Key="hello.txt")["Body"].read()
+          assert body == b"hello from boto3", body
+
+          sqs = boto3.client("sqs")
+          url = sqs.create_queue(QueueName="boto3-test")["QueueUrl"]
+          sqs.send_message(QueueUrl=url, MessageBody="hello from sqs")
+          msgs = sqs.receive_message(QueueUrl=url, WaitTimeSeconds=5).get("Messages", [])
+          assert [m["Body"] for m in msgs] == ["hello from sqs"], msgs
+          print("boto3 ok")
+          PY
+      - name: AWS SDK for JavaScript v3 (S3)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/js"
+          cat > smoke.mjs <<'JS'
+          import { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+
+          console.log("endpoint", process.env.AWS_ENDPOINT_URL, "ca", process.env.NODE_EXTRA_CA_CERTS);
+          const s3 = new S3Client({ forcePathStyle: true });
+          await s3.send(new CreateBucketCommand({ Bucket: "js-test" }));
+          await s3.send(new PutObjectCommand({ Bucket: "js-test", Key: "hello.txt", Body: "hello from js" }));
+          const res = await s3.send(new GetObjectCommand({ Bucket: "js-test", Key: "hello.txt" }));
+          const body = await res.Body.transformToString();
+          if (body !== "hello from js") throw new Error(`unexpected body: ${body}`);
+          console.log("js ok");
+          JS
+          node smoke.mjs
+      - name: Emulator logs
+        if: failure()
+        run: docker logs aws-emulator-9297

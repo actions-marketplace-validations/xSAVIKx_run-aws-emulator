@@ -208,6 +208,132 @@ lists them. The default telemetry is `off`. `DO_NOT_TRACK=1` also gives `off` wh
 The script detects rootless Docker and then runs the container as `0:0`, which maps to
 your own user.
 
+## Recipes
+
+### Dump the emulator logs when a job fails
+
+Give the action step an `id`. Add a last step with `if: failure()`. The `container`
+output holds the container name. The action sets it also when the container does not
+become ready. It does not set it when an input is not valid, because the action stops
+before it starts a container.
+
+```yaml
+      - uses: xSAVIKx/run-aws-emulator@v1
+        id: emulator
+      - run: make integration-test
+      - if: failure()
+        run: docker logs "${{ steps.emulator.outputs.container }}"
+```
+
+If you set `engine: podman`, use `podman logs`. When the container starts but does not
+become healthy, the action already prints the last 50 lines of the container log.
+
+### Cache the image between runs
+
+The cache saves the time to pull the image. The steps are:
+
+1. Restore the cache with `actions/cache`.
+2. If the cache has no hit, pull the image and save it with `docker save`.
+3. If the cache has a hit, load the image with `docker load`.
+4. Start the emulator. The `pull` input stays `false`, so the action uses the local image.
+
+```yaml
+    env:
+      EMULATOR_IMAGE: ghcr.io/xsavikx/aws-emulator:1.0.322.1
+    steps:
+      - id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/emulator-image.tar
+          key: emulator-${{ env.EMULATOR_IMAGE }}-${{ runner.arch }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          docker pull "$EMULATOR_IMAGE"
+          docker save "$EMULATOR_IMAGE" -o ~/emulator-image.tar
+      - if: steps.cache.outputs.cache-hit == 'true'
+        run: docker load -i ~/emulator-image.tar
+      - uses: xSAVIKx/run-aws-emulator@v1
+        with:
+          image: ${{ env.EMULATOR_IMAGE }}
+```
+
+Notes:
+
+- Put the architecture in the key. An `amd64` image and an `arm64` image are different files.
+- Pin a build tag or a digest. If you cache a moving tag such as `latest`, the key does
+  not change when the tag moves, and the job keeps the old image.
+- The image is large. The
+  [image README](https://github.com/xSAVIKx/aws-emulator-docker#compared-with-the-image-from-the-aws-guide)
+  lists about 1.4 to 1.5 GB uncompressed for each variant (`linux/amd64`). `docker save`
+  writes an uncompressed archive, and `actions/cache` compresses it. This action repository
+  did not measure the cache size. Each variant and each architecture is a separate cache entry.
+  GitHub removes old entries when a repository goes over its cache limit.
+- `actions/cache` saves the cache only when the job succeeds. If the first job fails, the
+  next job pulls the image again.
+- After `docker load`, the `image-digest` output can be empty, because a loaded image can
+  have no repository digest. The `cosign verify` example above then has no digest to
+  verify. Verify the image before you save it, or verify by tag and digest in the cache step.
+- A fast registry pull can be as quick as a cache restore. Measure both before you keep the cache.
+
+### Test all image variants in a matrix
+
+The `image` input selects the variant. Use the `:debian` or `:distroless` tag for those variants.
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ghcr.io/xsavikx/aws-emulator:latest
+          - ghcr.io/xsavikx/aws-emulator:debian
+          - ghcr.io/xsavikx/aws-emulator:distroless
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: xSAVIKx/run-aws-emulator@v1
+        id: emulator
+        with:
+          image: ${{ matrix.image }}
+      - run: make integration-test
+      - if: failure()
+        run: docker logs "${{ steps.emulator.outputs.container }}"
+```
+
+The matrix jobs run in parallel on separate runners, so each job can use the default `port`.
+On a self-hosted runner, give each concurrent job a unique `port`.
+
+## FAQ
+
+### Can I use it on macOS or Windows runners?
+
+No. The emulator runs only as a Linux container. GitHub-hosted macOS and Windows runners
+have no Docker for Linux containers. The action stops at once with a clear message on these
+runners. It stops also on `ubuntu-slim`.
+
+Run the emulator in a Linux job. If a job on macOS or Windows must run after the emulator
+tests, add `needs:` to it:
+
+```yaml
+jobs:
+  emulator-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: xSAVIKx/run-aws-emulator@v1
+      - run: make integration-test
+  desktop-build:
+    needs: emulator-tests
+    runs-on: macos-latest   # or windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make build
+```
+
+The emulator listens on `127.0.0.1` of the Linux runner. A job on another runner cannot
+reach it.
+
 ## License
 
 Apache License 2.0. Copyright 2026 Yurii Serhiichuk.
