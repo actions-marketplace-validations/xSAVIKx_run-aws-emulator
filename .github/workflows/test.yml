@@ -146,6 +146,7 @@ jobs:
           if docker ps -a --format '{{.Names}}' | grep -q '^aws-emulator-'; then echo "a container started"; exit 1; fi
 
   # The action must use an image that is already present when pull is "false".
+  # The tag exists only on the runner, so any pull of it fails the job.
   pull-false:
     name: pull false after a manual pull
     runs-on: ubuntu-24.04
@@ -154,12 +155,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Pull the image manually
-        run: docker pull -q ghcr.io/xsavikx/aws-emulator:latest
+      - name: Pull the image manually and give it a local-only tag
+        run: |
+          docker pull -q ghcr.io/xsavikx/aws-emulator:latest
+          docker tag ghcr.io/xsavikx/aws-emulator:latest ghcr.io/xsavikx/aws-emulator:local-only-pull-false
       - name: Run AWS Emulator
         id: emulator
         uses: ./
         with:
+          image: ghcr.io/xsavikx/aws-emulator:local-only-pull-false
           pull: "false"
       - name: Check the emulator
         env:
@@ -294,8 +298,14 @@ jobs:
           test "$AWS_DEFAULT_REGION" = eu-central-1
           aws configure list | tee configure.txt
           grep -E '^ *region ' configure.txt | grep -qw eu-central-1
-          # 3g is 3 * 1024^3 bytes.
-          test "$(docker inspect -f '{{.HostConfig.Memory}}' "$NAME")" = 3221225472
+          # 3g is 3 * 1024^3 bytes. A value of 0 means that the action used its
+          # start without a memory limit (the fallback for rootless setups).
+          mem=$(docker inspect -f '{{.HostConfig.Memory}}' "$NAME")
+          if [ "$mem" = 0 ]; then
+            echo "::error::The container has no memory limit. The action used its fallback start without a limit."
+            exit 1
+          fi
+          test "$mem" = 3221225472
           test "$(docker inspect -f '{{.HostConfig.MemorySwap}}' "$NAME")" = 3221225472
           docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$NAME" | grep -qx EMULATOR_TELEMETRY=off
           aws s3 mb s3://region-test
